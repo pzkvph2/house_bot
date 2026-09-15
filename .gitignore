@@ -1,0 +1,21 @@
+# Environment variables & secrets (CRITICAL: Do not upload to GitHub!)
+.env
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Database
+*.db
+*.sqlite3
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS specific
+.DS_Store
+Thumbs.db

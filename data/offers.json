@@ -1,0 +1,58 @@
+[
+  {
+    "id": "english_skyeng",
+    "is_active": true,
+    "priority": 1,
+    "title": {
+      "ru": "🇬🇧 Английский язык (Skyeng / Интенсив)",
+      "kz": "🇬🇧 Ағылшын тілі (Skyeng / Интенсив)"
+    },
+    "description": {
+      "ru": "Индивидуальные уроки английского языка с носителями и топовыми преподавателями. Интерактивная платформа, персональный график и подготовка к IELTS/работе.",
+      "kz": "Шетелдік мамандармен ағылшын тілін жеке оқыту. Интерактивті платформа, ыңғайлы кесте және IELTS/жұмысқа дайындық курстары."
+    },
+    "url_template": "https://trk.partner-network.com/click?offer_id=101&aff_id=777&sub1={user_id}&sub2=skyeng"
+  },
+  {
+    "id": "it_kaspi",
+    "is_active": true,
+    "priority": 2,
+    "title": {
+      "ru": "💻 IT-профессии (Kaspi Рассрочка 0-0-24)",
+      "kz": "💻 IT-мамандықтары (Kaspi 0-0-24 бөліп төлеу)"
+    },
+    "description": {
+      "ru": "Обучение с нуля: Python, Data Science, Frontend, QA-тестирование. Гарантия помощи в трудоустройстве и возможность оплаты частями через Kaspi.",
+      "kz": "Нөлден бастап үйрену: Python, Data Science, Frontend, QA тестілеу. Жұмысқа орналасуға көмек және Kaspi арқылы бөліп төлеу қарастырылған."
+    },
+    "url_template": "https://trk.partner-network.com/click?offer_id=202&aff_id=777&sub1={user_id}&sub2=it_kaspi"
+  },
+  {
+    "id": "digital_marketing",
+    "is_active": true,
+    "priority": 3,
+    "title": {
+      "ru": "📱 Таргет, SMM и Маркетинг (Быстрый старт)",
+      "kz": "📱 Таргет, SMM және Маркетинг (Жылдам бастау)"
+    },
+    "description": {
+      "ru": "Практический курс по запуску рекламы в Instagram/TikTok, созданию контента и лидогенерации для казахстанского и зарубежного бизнеса.",
+      "kz": "Instagram/TikTok жарнамасын баптау, сапалы контент жасау және Қазақстан мен шетел бизнесі үшін клиент тартудың тәжірибелік курсы."
+    },
+    "url_template": "https://trk.partner-network.com/click?offer_id=303&aff_id=777&sub1={user_id}&sub2=marketing"
+  },
+  {
+    "id": "design_uiux",
+    "is_active": true,
+    "priority": 4,
+    "title": {
+      "ru": "🎨 Графический & UX/UI Дизайн (Figma с нуля)",
+      "kz": "🎨 Графикалық және UX/UI Дизайн (Figma нөлден)"
+    },
+    "description": {
+      "ru": "Создание мобильных приложений, сайтов и брендинга в Figma. Оплата через Kaspi Рассрочку и портфолио к концу обучения.",
+      "kz": "Figma арқылы сайттар, мобильді қосымшалар және брендинг жасау. Kaspi арқылы бөліп төлеу және дайын портфолио."
+    },
+    "url_template": "https://trk.partner-network.com/click?offer_id=404&aff_id=777&sub1={user_id}&sub2=design"
+  }
+]
