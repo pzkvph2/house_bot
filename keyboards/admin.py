@@ -7,6 +7,7 @@ def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📊 Подробная статистика", callback_data="admin:stats")
     builder.button(text="📢 Создать рассылку (дожим)", callback_data="admin:bc_menu")
     builder.button(text="📥 Выгрузить базу (CSV)", callback_data="admin:export_csv")
+    builder.button(text="🔒 Выйти из админки", callback_data="admin:logout")
     builder.adjust(1)
     return builder.as_markup()
 

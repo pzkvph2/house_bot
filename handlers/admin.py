@@ -18,30 +18,110 @@ from keyboards.admin import (
 logger = logging.getLogger(__name__)
 router = Router(name="admin_router")
 
+# Хранилище активных аутентифицированных сессий администраторов
+authenticated_admins: set[int] = set()
+
+class AdminAuthFSM(StatesGroup):
+    waiting_for_password = State()
+
 class BroadcastFSM(StatesGroup):
     waiting_for_message = State()
     confirm_send = State()
 
-def is_admin(user_id: int) -> bool:
+def is_admin_id(user_id: int) -> bool:
+    """Проверка Telegram ID по списку ADMIN_IDS в настройках"""
     return user_id in settings.admin_id_list
+
+def is_authenticated(user_id: int) -> bool:
+    """Проверка: админ авторизован по ID И успешно ввел секретный пароль"""
+    return is_admin_id(user_id) and (user_id in authenticated_admins)
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
-    """Точка входа в админ-панель"""
-    if not is_admin(message.from_user.id):
+    """
+    Точка входа /admin.
+    Если пароль еще не введен — запрашивает секретный пароль.
+    Если пароль уже подтвержден — открывает меню управления.
+    """
+    user_id = message.from_user.id
+    if not is_admin_id(user_id):
         return
 
+    if is_authenticated(user_id):
+        await state.clear()
+        text = (
+            "🔐 <b>Панель администратора</b>\n\n"
+            "Сессия активна. Выберите необходимое действие:"
+        )
+        await message.answer(text=text, reply_markup=get_admin_menu_keyboard(), parse_mode="HTML")
+    else:
+        await state.set_state(AdminAuthFSM.waiting_for_password)
+        await message.answer(
+            text=(
+                "🛡 <b>Вход в панель администратора</b>\n\n"
+                "Введите секретный пароль доступа:"
+            ),
+            parse_mode="HTML"
+        )
+
+@router.message(AdminAuthFSM.waiting_for_password)
+async def on_admin_password_entered(message: Message, state: FSMContext):
+    """
+    Проверка введенного пароля.
+    Введенное сообщение с паролем немедленно удаляется из чата ради безопасности!
+    """
+    user_id = message.from_user.id
+    if not is_admin_id(user_id):
+        return
+
+    entered_password = (message.text or "").strip()
+
+    # Сразу удаляем сообщение с паролем из чата
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    if entered_password == settings.ADMIN_PASSWORD.strip():
+        authenticated_admins.add(user_id)
+        await state.clear()
+        await message.answer(
+            text=(
+                "✅ <b>Пароль принят! Доступ разрешен.</b>\n\n"
+                "🔐 <b>Панель администратора</b>\n"
+                "Выберите необходимое действие:"
+            ),
+            reply_markup=get_admin_menu_keyboard(),
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            text=(
+                "⛔ <b>Неверный пароль доступа!</b>\n\n"
+                "Попробуйте ввести пароль еще раз или отправьте /start для выхода."
+            ),
+            parse_mode="HTML"
+        )
+
+@router.callback_query(F.data == "admin:logout")
+async def on_admin_logout(callback: CallbackQuery, state: FSMContext):
+    """Завершение сессии администратора"""
+    user_id = callback.from_user.id
+    authenticated_admins.discard(user_id)
     await state.clear()
-    text = (
-        "🔐 <b>Панель администратора</b>\n\n"
-        "Выберите необходимое действие:"
-    )
-    await message.answer(text=text, reply_markup=get_admin_menu_keyboard(), parse_mode="HTML")
+
+    await callback.answer("Сессия закрыта")
+    if callback.message:
+        await callback.message.edit_text(
+            text="🔒 <b>Сессия администратора завершена.</b>\nДля повторного входа используйте команду /admin.",
+            parse_mode="HTML"
+        )
 
 @router.callback_query(F.data == "admin:menu")
 async def on_admin_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню админки"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
+        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
     await state.clear()
@@ -56,7 +136,8 @@ async def on_admin_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "admin:stats")
 async def on_admin_stats(callback: CallbackQuery):
     """Отображение развернутой статистики бота"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
+        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
     await callback.answer("Загрузка статистики...")
@@ -71,7 +152,6 @@ async def on_admin_stats(callback: CallbackQuery):
     results = stats["test_results"]
     clicks = stats["clicks"]
 
-    # Формируем читабельный отчет
     report = [
         "📊 <b>СТАТИСТИКА БОТА И ЛИДОВ</b>\n",
         f"👥 <b>Всего пользователей:</b> {total}",
@@ -109,7 +189,8 @@ async def on_admin_stats(callback: CallbackQuery):
 @router.callback_query(F.data == "admin:export_csv")
 async def on_admin_export_csv(callback: CallbackQuery):
     """Выгрузка базы пользователей в формате CSV"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
+        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
     await callback.answer("Формирую CSV-файл базы...")
@@ -132,7 +213,8 @@ async def on_admin_export_csv(callback: CallbackQuery):
 @router.callback_query(F.data == "admin:bc_menu")
 async def on_broadcast_menu(callback: CallbackQuery):
     """Выбор аудитории для рассылки"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
+        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
     text = (
@@ -150,7 +232,8 @@ async def on_broadcast_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("admin:bc_target:"))
 async def on_broadcast_target_selected(callback: CallbackQuery, state: FSMContext):
     """Фиксация сегмента и запрос сообщения для рассылки"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
+        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
     target = callback.data.split(":")[2]
@@ -175,7 +258,7 @@ async def on_broadcast_target_selected(callback: CallbackQuery, state: FSMContex
         f"🎯 Выбран сегмент: <b>{target_title}</b>\n"
         f"👥 Получателей в базе: <b>{len(user_ids)} чел.</b>\n\n"
         "👇 <b>Отправьте сообщение для рассылки прямо в этот чат:</b>\n"
-        "<i>(Поддерживается обычный текст, форматирование, ссылки, а также фото с подписью)</i>"
+        "<i>(Поддерживается текст, ссылки, форматирование, а также фото с подписью)</i>"
     )
 
     await callback.answer()
@@ -185,7 +268,7 @@ async def on_broadcast_target_selected(callback: CallbackQuery, state: FSMContex
 @router.message(BroadcastFSM.waiting_for_message)
 async def on_broadcast_message_received(message: Message, state: FSMContext):
     """Получение шаблона сообщения от админа и показ предпросмотра"""
-    if not is_admin(message.from_user.id):
+    if not is_authenticated(message.from_user.id):
         return
 
     await state.update_data(message_id=message.message_id, from_chat_id=message.chat.id)
@@ -207,7 +290,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
 @router.callback_query(BroadcastFSM.confirm_send, F.data == "admin:bc_send")
 async def on_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """Выполнение массовой рассылки с контролем скорости и отчетом"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
         return
 
     data = await state.get_data()
@@ -237,7 +320,6 @@ async def on_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: Bot
             sent_count += 1
             await asyncio.sleep(0.04)  # Защита от лимитов Telegram (25-30 сообщений/сек)
         except TelegramForbiddenError:
-            # Пользователь заблокировал бота
             blocked_count += 1
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
@@ -262,7 +344,7 @@ async def on_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: Bot
 @router.callback_query(F.data == "admin:bc_cancel")
 async def on_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена рассылки"""
-    if not is_admin(callback.from_user.id):
+    if not is_authenticated(callback.from_user.id):
         return
 
     await state.clear()

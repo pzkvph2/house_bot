@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = f"sqlite+aiosqlite:///{BASE_DIR / 'bot.db'}"
     CHANNEL_URL: str = "https://t.me/your_kz_channel"
     ADMIN_IDS: str = "507618077"
+    ADMIN_PASSWORD: str = "KzEdu#Admin_9842$X!"
     PORT: int = int(os.getenv("PORT", "8080"))
     
     LOCALES_PATH: Path = BASE_DIR / "data" / "locales.json"
