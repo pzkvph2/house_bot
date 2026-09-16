@@ -11,6 +11,14 @@ def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
+def get_admin_stats_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура экрана статистики"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Обновить данные", callback_data="admin:stats")
+    builder.button(text="⬅️ Назад в меню админки", callback_data="admin:menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
 def get_broadcast_target_keyboard() -> InlineKeyboardMarkup:
     """Выбор сегмента аудитории для рассылки"""
     builder = InlineKeyboardBuilder()

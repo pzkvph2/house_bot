@@ -10,59 +10,71 @@ class AdminService:
     @staticmethod
     async def get_stats() -> Dict[str, Any]:
         """Сбор подробной статистики по пользователям, языкам, тестам и офферам"""
-        async with async_session() as session:
-            # Общее количество пользователей
-            total_users_res = await session.execute(select(func.count(User.user_id)))
-            total_users = total_users_res.scalar() or 0
+        try:
+            async with async_session() as session:
+                # Общее количество пользователей
+                total_users_res = await session.execute(select(func.count(User.user_id)))
+                total_users = total_users_res.scalar() or 0
 
-            # Новые за 24 часа и 7 дней
-            now = datetime.utcnow()
-            day_ago = now - timedelta(days=1)
-            week_ago = now - timedelta(days=7)
+                # Новые за 24 часа и 7 дней
+                now = datetime.utcnow()
+                day_ago = now - timedelta(days=1)
+                week_ago = now - timedelta(days=7)
 
-            today_res = await session.execute(select(func.count(User.user_id)).where(User.created_at >= day_ago))
-            users_today = today_res.scalar() or 0
+                today_res = await session.execute(select(func.count(User.user_id)).where(User.created_at >= day_ago))
+                users_today = today_res.scalar() or 0
 
-            week_res = await session.execute(select(func.count(User.user_id)).where(User.created_at >= week_ago))
-            users_week = week_res.scalar() or 0
+                week_res = await session.execute(select(func.count(User.user_id)).where(User.created_at >= week_ago))
+                users_week = week_res.scalar() or 0
 
-            # Статистика по языкам
-            lang_res = await session.execute(
-                select(User.language, func.count(User.user_id)).group_by(User.language)
-            )
-            languages = dict(lang_res.all())
+                # Статистика по языкам (безопасная распаковка)
+                lang_res = await session.execute(
+                    select(User.language, func.count(User.user_id)).group_by(User.language)
+                )
+                languages = {row[0]: row[1] for row in lang_res.all() if row[0]}
 
-            # Статистика по прохождению теста
-            completed_test_res = await session.execute(
-                select(func.count(User.user_id)).where(User.test_result.isnot(None))
-            )
-            completed_test = completed_test_res.scalar() or 0
+                # Статистика по прохождению теста
+                completed_test_res = await session.execute(
+                    select(func.count(User.user_id)).where(User.test_result.isnot(None))
+                )
+                completed_test = completed_test_res.scalar() or 0
 
-            # Результаты теста по направлениям
-            test_results_res = await session.execute(
-                select(User.test_result, func.count(User.user_id))
-                .where(User.test_result.isnot(None))
-                .group_by(User.test_result)
-            )
-            test_results = dict(test_results_res.all())
+                # Результаты теста по направлениям
+                test_results_res = await session.execute(
+                    select(User.test_result, func.count(User.user_id))
+                    .where(User.test_result.isnot(None))
+                    .group_by(User.test_result)
+                )
+                test_results = {row[0]: row[1] for row in test_results_res.all() if row[0]}
 
-            # Клики по офферам
-            clicks_res = await session.execute(
-                select(User.last_clicked_offer_id, func.count(User.user_id))
-                .where(User.last_clicked_offer_id.isnot(None))
-                .group_by(User.last_clicked_offer_id)
-                .order_by(desc(func.count(User.user_id)))
-            )
-            clicks = dict(clicks_res.all())
+                # Клики по офферам
+                clicks_res = await session.execute(
+                    select(User.last_clicked_offer_id, func.count(User.user_id))
+                    .where(User.last_clicked_offer_id.isnot(None))
+                    .group_by(User.last_clicked_offer_id)
+                    .order_by(desc(func.count(User.user_id)))
+                )
+                clicks = {row[0]: row[1] for row in clicks_res.all() if row[0]}
 
+                return {
+                    "total_users": total_users,
+                    "users_today": users_today,
+                    "users_week": users_week,
+                    "languages": languages,
+                    "completed_test": completed_test,
+                    "test_results": test_results,
+                    "clicks": clicks,
+                }
+        except Exception as e:
             return {
-                "total_users": total_users,
-                "users_today": users_today,
-                "users_week": users_week,
-                "languages": languages,
-                "completed_test": completed_test,
-                "test_results": test_results,
-                "clicks": clicks,
+                "total_users": 0,
+                "users_today": 0,
+                "users_week": 0,
+                "languages": {},
+                "completed_test": 0,
+                "test_results": {},
+                "clicks": {},
+                "error": str(e)
             }
 
     @staticmethod

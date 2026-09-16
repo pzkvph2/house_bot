@@ -9,8 +9,10 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 from config import settings
 from services.admin_service import admin_service
+from services.user_service import UserService
 from keyboards.admin import (
     get_admin_menu_keyboard,
+    get_admin_stats_keyboard,
     get_broadcast_target_keyboard,
     get_broadcast_confirm_keyboard,
 )
@@ -18,7 +20,7 @@ from keyboards.admin import (
 logger = logging.getLogger(__name__)
 router = Router(name="admin_router")
 
-# Хранилище активных аутентифицированных сессий администраторов
+# Локальный кэш сессий для мгновенной проверки без лишних запросов к БД
 authenticated_admins: set[int] = set()
 
 class AdminAuthFSM(StatesGroup):
@@ -32,22 +34,33 @@ def is_admin_id(user_id: int) -> bool:
     """Проверка Telegram ID по списку ADMIN_IDS в настройках"""
     return user_id in settings.admin_id_list
 
-def is_authenticated(user_id: int) -> bool:
-    """Проверка: админ авторизован по ID И успешно ввел секретный пароль"""
-    return is_admin_id(user_id) and (user_id in authenticated_admins)
+async def is_authenticated(user_id: int) -> bool:
+    """
+    Проверка авторизации:
+    1. Проверяет в локальном кэше памяти
+    2. Проверяет сохраненную сессию в базе данных (не слетает при перезапуске Render!)
+    """
+    if not is_admin_id(user_id):
+        return False
+    if user_id in authenticated_admins:
+        return True
+    if await UserService.is_admin_session_valid(user_id):
+        authenticated_admins.add(user_id)
+        return True
+    return False
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     """
     Точка входа /admin.
-    Если пароль еще не введен — запрашивает секретный пароль.
-    Если пароль уже подтвержден — открывает меню управления.
+    Если сессия активна (в БД или памяти) — сразу открывает меню.
+    Иначе — запрашивает секретный пароль.
     """
     user_id = message.from_user.id
     if not is_admin_id(user_id):
         return
 
-    if is_authenticated(user_id):
+    if await is_authenticated(user_id):
         await state.clear()
         text = (
             "🔐 <b>Панель администратора</b>\n\n"
@@ -67,8 +80,9 @@ async def cmd_admin(message: Message, state: FSMContext):
 @router.message(AdminAuthFSM.waiting_for_password)
 async def on_admin_password_entered(message: Message, state: FSMContext):
     """
-    Проверка введенного пароля.
-    Введенное сообщение с паролем немедленно удаляется из чата ради безопасности!
+    Проверка пароля:
+    - Сообщение с паролем удаляется из чата
+    - Сессия сохраняется в БД на 7 дней (не сбрасывается при перезапусках сервера)
     """
     user_id = message.from_user.id
     if not is_admin_id(user_id):
@@ -76,7 +90,7 @@ async def on_admin_password_entered(message: Message, state: FSMContext):
 
     entered_password = (message.text or "").strip()
 
-    # Сразу удаляем сообщение с паролем из чата
+    # Немедленно удаляем пароль из чата
     try:
         await message.delete()
     except Exception:
@@ -84,6 +98,8 @@ async def on_admin_password_entered(message: Message, state: FSMContext):
 
     if entered_password == settings.ADMIN_PASSWORD.strip():
         authenticated_admins.add(user_id)
+        # Сохраняем сессию в БД на 7 дней
+        await UserService.set_admin_session(user_id, days=7)
         await state.clear()
         await message.answer(
             text=(
@@ -108,6 +124,7 @@ async def on_admin_logout(callback: CallbackQuery, state: FSMContext):
     """Завершение сессии администратора"""
     user_id = callback.from_user.id
     authenticated_admins.discard(user_id)
+    await UserService.clear_admin_session(user_id)
     await state.clear()
 
     await callback.answer("Сессия закрыта")
@@ -120,7 +137,7 @@ async def on_admin_logout(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "admin:menu")
 async def on_admin_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню админки"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
@@ -136,21 +153,31 @@ async def on_admin_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "admin:stats")
 async def on_admin_stats(callback: CallbackQuery):
     """Отображение развернутой статистики бота"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
-    await callback.answer("Загрузка статистики...")
-    stats = await admin_service.get_stats()
+    await callback.answer("Загружаю актуальную статистику...")
+    try:
+        stats = await admin_service.get_stats()
+    except Exception as e:
+        logger.error(f"Error loading stats: {e}", exc_info=True)
+        if callback.message:
+            await callback.message.edit_text(
+                text=f"⚠️ <b>Не удалось загрузить данные из базы:</b>\n\n<code>{e}</code>",
+                reply_markup=get_admin_stats_keyboard(),
+                parse_mode="HTML"
+            )
+        return
 
-    total = stats["total_users"]
-    today = stats["users_today"]
-    week = stats["users_week"]
-    langs = stats["languages"]
-    completed = stats["completed_test"]
+    total = stats.get("total_users", 0)
+    today = stats.get("users_today", 0)
+    week = stats.get("users_week", 0)
+    langs = stats.get("languages", {})
+    completed = stats.get("completed_test", 0)
     conv = int((completed / total) * 100) if total > 0 else 0
-    results = stats["test_results"]
-    clicks = stats["clicks"]
+    results = stats.get("test_results", {})
+    clicks = stats.get("clicks", {})
 
     report = [
         "📊 <b>СТАТИСТИКА БОТА И ЛИДОВ</b>\n",
@@ -182,38 +209,41 @@ async def on_admin_stats(callback: CallbackQuery):
     if callback.message:
         await callback.message.edit_text(
             text=text,
-            reply_markup=get_admin_menu_keyboard(),
+            reply_markup=get_admin_stats_keyboard(),
             parse_mode="HTML"
         )
 
 @router.callback_query(F.data == "admin:export_csv")
 async def on_admin_export_csv(callback: CallbackQuery):
     """Выгрузка базы пользователей в формате CSV"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
     await callback.answer("Формирую CSV-файл базы...")
-    csv_bytes = await admin_service.export_csv()
-    doc = BufferedInputFile(csv_bytes.getvalue(), filename="users_export.csv")
-
-    stats = await admin_service.get_stats()
-    caption = (
-        f"📥 <b>Экспорт базы пользователей</b>\n\n"
-        f"• Всего записей: <b>{stats['total_users']}</b>\n"
-        f"• Формат: CSV (UTF-8 с разделителем ';')\n"
-        f"• Открывается в Excel, Google Таблицах или Numbers."
-    )
-
-    if callback.message:
-        await callback.message.answer_document(document=doc, caption=caption, parse_mode="HTML")
+    try:
+        csv_bytes = await admin_service.export_csv()
+        doc = BufferedInputFile(csv_bytes.getvalue(), filename="users_export.csv")
+        stats = await admin_service.get_stats()
+        caption = (
+            f"📥 <b>Экспорт базы пользователей</b>\n\n"
+            f"• Всего записей: <b>{stats['total_users']}</b>\n"
+            f"• Формат: CSV (UTF-8 с разделителем ';')\n"
+            f"• Открывается в Excel, Google Таблицах или Numbers."
+        )
+        if callback.message:
+            await callback.message.answer_document(document=doc, caption=caption, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error exporting CSV: {e}", exc_info=True)
+        if callback.message:
+            await callback.message.answer(f"⚠️ Ошибка при формировании файла: {e}")
 
 # ==================== РАССЫЛКА (ДОЖИМ) ====================
 
 @router.callback_query(F.data == "admin:bc_menu")
 async def on_broadcast_menu(callback: CallbackQuery):
     """Выбор аудитории для рассылки"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
@@ -232,7 +262,7 @@ async def on_broadcast_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("admin:bc_target:"))
 async def on_broadcast_target_selected(callback: CallbackQuery, state: FSMContext):
     """Фиксация сегмента и запрос сообщения для рассылки"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         await callback.answer("Требуется авторизация (/admin)", show_alert=True)
         return
 
@@ -268,7 +298,7 @@ async def on_broadcast_target_selected(callback: CallbackQuery, state: FSMContex
 @router.message(BroadcastFSM.waiting_for_message)
 async def on_broadcast_message_received(message: Message, state: FSMContext):
     """Получение шаблона сообщения от админа и показ предпросмотра"""
-    if not is_authenticated(message.from_user.id):
+    if not await is_authenticated(message.from_user.id):
         return
 
     await state.update_data(message_id=message.message_id, from_chat_id=message.chat.id)
@@ -290,7 +320,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
 @router.callback_query(BroadcastFSM.confirm_send, F.data == "admin:bc_send")
 async def on_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """Выполнение массовой рассылки с контролем скорости и отчетом"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         return
 
     data = await state.get_data()
@@ -344,7 +374,7 @@ async def on_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: Bot
 @router.callback_query(F.data == "admin:bc_cancel")
 async def on_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена рассылки"""
-    if not is_authenticated(callback.from_user.id):
+    if not await is_authenticated(callback.from_user.id):
         return
 
     await state.clear()

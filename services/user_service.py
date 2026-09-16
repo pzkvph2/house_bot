@@ -91,3 +91,41 @@ class UserService:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    @staticmethod
+    async def is_admin_session_valid(user_id: int) -> bool:
+        """Проверка валидности сессии админа в базе данных"""
+        try:
+            async with async_session() as session:
+                stmt = select(User.admin_authenticated_until).where(User.user_id == user_id)
+                res = await session.execute(stmt)
+                until = res.scalar_one_or_none()
+                if until and until > datetime.utcnow():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    async def set_admin_session(user_id: int, days: int = 7) -> None:
+        """Сохранение сессии админа в базе данных на 7 дней"""
+        try:
+            async with async_session() as session:
+                until = datetime.utcnow() + timedelta(days=days)
+                stmt = update(User).where(User.user_id == user_id).values(admin_authenticated_until=until)
+                await session.execute(stmt)
+                await session.commit()
+        except Exception:
+            pass
+
+    @staticmethod
+    async def clear_admin_session(user_id: int) -> None:
+        """Сброс сессии админа в базе данных"""
+        try:
+            async with async_session() as session:
+                stmt = update(User).where(User.user_id == user_id).values(admin_authenticated_until=None)
+                await session.execute(stmt)
+                await session.commit()
+        except Exception:
+            pass
+
+

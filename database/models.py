@@ -24,6 +24,7 @@ class User(Base):
     # Даты активности
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, doc="Дата первой регистрации в боте")
     last_active_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, doc="Дата последней активности")
+    admin_authenticated_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, doc="Срок действия сессии админа")
 
     def __repr__(self) -> str:
         return f"<User id={self.user_id} lang={self.language} offer={self.last_clicked_offer_id}>"

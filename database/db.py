@@ -28,6 +28,10 @@ async def init_db() -> None:
                 await conn.execute(text("ALTER TABLE users ADD COLUMN test_completed_at TIMESTAMP"))
             except Exception:
                 pass
+            try:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN admin_authenticated_until TIMESTAMP"))
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"PostgreSQL/Supabase unavailable locally ({e}). Using local SQLite database...")
         fallback_url = f"sqlite+aiosqlite:///{BASE_DIR / 'bot.db'}"
@@ -41,6 +45,10 @@ async def init_db() -> None:
                 pass
             try:
                 await conn.execute(text("ALTER TABLE users ADD COLUMN test_completed_at TIMESTAMP"))
+            except Exception:
+                pass
+            try:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN admin_authenticated_until TIMESTAMP"))
             except Exception:
                 pass
         logger.info("Local SQLite database initialized and ready.")
