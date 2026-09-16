@@ -9,6 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from config import settings
 from database.db import init_db
 from handlers.user import router as user_router
+from handlers.admin import router as admin_router
 
 async def health_check(request: web.Request) -> web.Response:
     """Эндпоинт для проверки здоровья сервера и предотвращения засыпания на Render"""
@@ -50,6 +51,7 @@ async def main():
     dp = Dispatcher()
 
     # Регистрация роутеров
+    dp.include_router(admin_router)
     dp.include_router(user_router)
 
     # Пропуск накопившихся апдейтов и запуск polling
