@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     QUIZ_PATH: Path = BASE_DIR / "data" / "quiz.json"
 
     model_config = SettingsConfigDict(
-        env_file=[BASE_DIR / ".env", BASE_DIR / ".env.example"],
+        env_file=[BASE_DIR / ".env.example", BASE_DIR / ".env"],
         env_file_encoding="utf-8",
         extra="ignore"
     )
