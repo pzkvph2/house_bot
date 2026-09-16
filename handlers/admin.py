@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramBadRequest
 
 from config import settings
 from services.admin_service import admin_service
@@ -60,6 +60,9 @@ async def cmd_admin(message: Message, state: FSMContext):
     if not is_admin_id(user_id):
         return
 
+    # Убеждаемся, что админ есть в таблице users
+    await UserService.get_or_create_user(user_id, message.from_user.username)
+
     if await is_authenticated(user_id):
         await state.clear()
         text = (
@@ -98,7 +101,8 @@ async def on_admin_password_entered(message: Message, state: FSMContext):
 
     if entered_password == settings.ADMIN_PASSWORD.strip():
         authenticated_admins.add(user_id)
-        # Сохраняем сессию в БД на 7 дней
+        # Убеждаемся, что запись есть в таблице и сохраняем сессию на 7 дней
+        await UserService.get_or_create_user(user_id, message.from_user.username)
         await UserService.set_admin_session(user_id, days=7)
         await state.clear()
         await message.answer(
@@ -138,7 +142,13 @@ async def on_admin_logout(callback: CallbackQuery, state: FSMContext):
 async def on_admin_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню админки"""
     if not await is_authenticated(callback.from_user.id):
-        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
+        await callback.answer("Сессия истекла. Введите пароль.", show_alert=True)
+        await state.set_state(AdminAuthFSM.waiting_for_password)
+        if callback.message:
+            await callback.message.edit_text(
+                text="🛡 <b>Сессия истекла</b>\n\nВведите секретный пароль администратора для входа:",
+                parse_mode="HTML"
+            )
         return
 
     await state.clear()
@@ -148,13 +158,23 @@ async def on_admin_menu(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
     if callback.message:
-        await callback.message.edit_text(text=text, reply_markup=get_admin_menu_keyboard(), parse_mode="HTML")
+        try:
+            await callback.message.edit_text(text=text, reply_markup=get_admin_menu_keyboard(), parse_mode="HTML")
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
 
 @router.callback_query(F.data == "admin:stats")
-async def on_admin_stats(callback: CallbackQuery):
+async def on_admin_stats(callback: CallbackQuery, state: FSMContext):
     """Отображение развернутой статистики бота"""
     if not await is_authenticated(callback.from_user.id):
-        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
+        await callback.answer("Сессия истекла. Введите пароль.", show_alert=True)
+        await state.set_state(AdminAuthFSM.waiting_for_password)
+        if callback.message:
+            await callback.message.edit_text(
+                text="🛡 <b>Сессия истекла</b>\n\nВведите секретный пароль администратора для входа:",
+                parse_mode="HTML"
+            )
         return
 
     await callback.answer("Загружаю актуальную статистику...")
@@ -165,6 +185,16 @@ async def on_admin_stats(callback: CallbackQuery):
         if callback.message:
             await callback.message.edit_text(
                 text=f"⚠️ <b>Не удалось загрузить данные из базы:</b>\n\n<code>{e}</code>",
+                reply_markup=get_admin_stats_keyboard(),
+                parse_mode="HTML"
+            )
+        return
+
+    if "error" in stats and stats["error"]:
+        logger.error(f"Database stats error: {stats['error']}")
+        if callback.message:
+            await callback.message.edit_text(
+                text=f"⚠️ <b>Ошибка при запросе к базе данных:</b>\n\n<code>{stats['error']}</code>",
                 reply_markup=get_admin_stats_keyboard(),
                 parse_mode="HTML"
             )
@@ -207,17 +237,29 @@ async def on_admin_stats(callback: CallbackQuery):
     text = "\n".join(report)
 
     if callback.message:
-        await callback.message.edit_text(
-            text=text,
-            reply_markup=get_admin_stats_keyboard(),
-            parse_mode="HTML"
-        )
+        try:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=get_admin_stats_keyboard(),
+                parse_mode="HTML"
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                await callback.answer("Данные уже актуальны 👍")
+            else:
+                raise
 
 @router.callback_query(F.data == "admin:export_csv")
-async def on_admin_export_csv(callback: CallbackQuery):
+async def on_admin_export_csv(callback: CallbackQuery, state: FSMContext):
     """Выгрузка базы пользователей в формате CSV"""
     if not await is_authenticated(callback.from_user.id):
-        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
+        await callback.answer("Сессия истекла. Введите пароль.", show_alert=True)
+        await state.set_state(AdminAuthFSM.waiting_for_password)
+        if callback.message:
+            await callback.message.edit_text(
+                text="🛡 <b>Сессия истекла</b>\n\nВведите секретный пароль администратора для входа:",
+                parse_mode="HTML"
+            )
         return
 
     await callback.answer("Формирую CSV-файл базы...")
@@ -241,10 +283,16 @@ async def on_admin_export_csv(callback: CallbackQuery):
 # ==================== РАССЫЛКА (ДОЖИМ) ====================
 
 @router.callback_query(F.data == "admin:bc_menu")
-async def on_broadcast_menu(callback: CallbackQuery):
+async def on_broadcast_menu(callback: CallbackQuery, state: FSMContext):
     """Выбор аудитории для рассылки"""
     if not await is_authenticated(callback.from_user.id):
-        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
+        await callback.answer("Сессия истекла. Введите пароль.", show_alert=True)
+        await state.set_state(AdminAuthFSM.waiting_for_password)
+        if callback.message:
+            await callback.message.edit_text(
+                text="🛡 <b>Сессия истекла</b>\n\nВведите секретный пароль администратора для входа:",
+                parse_mode="HTML"
+            )
         return
 
     text = (
@@ -253,17 +301,27 @@ async def on_broadcast_menu(callback: CallbackQuery):
     )
     await callback.answer()
     if callback.message:
-        await callback.message.edit_text(
-            text=text,
-            reply_markup=get_broadcast_target_keyboard(),
-            parse_mode="HTML"
-        )
+        try:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=get_broadcast_target_keyboard(),
+                parse_mode="HTML"
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
 
 @router.callback_query(F.data.startswith("admin:bc_target:"))
 async def on_broadcast_target_selected(callback: CallbackQuery, state: FSMContext):
     """Фиксация сегмента и запрос сообщения для рассылки"""
     if not await is_authenticated(callback.from_user.id):
-        await callback.answer("Требуется авторизация (/admin)", show_alert=True)
+        await callback.answer("Сессия истекла. Введите пароль.", show_alert=True)
+        await state.set_state(AdminAuthFSM.waiting_for_password)
+        if callback.message:
+            await callback.message.edit_text(
+                text="🛡 <b>Сессия истекла</b>\n\nВведите секретный пароль администратора для входа:",
+                parse_mode="HTML"
+            )
         return
 
     target = callback.data.split(":")[2]

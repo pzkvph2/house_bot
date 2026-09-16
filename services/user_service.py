@@ -1,9 +1,12 @@
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from database.models import User
 from database.db import async_session
+
+logger = logging.getLogger(__name__)
 
 class UserService:
     @staticmethod
@@ -14,13 +17,14 @@ class UserService:
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
+            now = datetime.utcnow()
             if not user:
                 user = User(
                     user_id=user_id,
                     username=username,
                     language="ru",
-                    created_at=datetime.utcnow(),
-                    last_active_at=datetime.utcnow()
+                    created_at=now,
+                    last_active_at=now
                 )
                 session.add(user)
                 await session.commit()
@@ -29,7 +33,7 @@ class UserService:
                 # Обновляем username и дату активности при каждом визите
                 if user.username != username:
                     user.username = username
-                user.last_active_at = datetime.utcnow()
+                user.last_active_at = now
                 await session.commit()
                 await session.refresh(user)
             return user
@@ -101,8 +105,8 @@ class UserService:
                 until = res.scalar_one_or_none()
                 if until and until > datetime.utcnow():
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error checking admin session for {user_id}: {e}", exc_info=True)
         return False
 
     @staticmethod
@@ -111,11 +115,25 @@ class UserService:
         try:
             async with async_session() as session:
                 until = datetime.utcnow() + timedelta(days=days)
-                stmt = update(User).where(User.user_id == user_id).values(admin_authenticated_until=until)
-                await session.execute(stmt)
+                stmt = select(User).where(User.user_id == user_id)
+                res = await session.execute(stmt)
+                user = res.scalar_one_or_none()
+                if not user:
+                    user = User(
+                        user_id=user_id,
+                        language="ru",
+                        admin_authenticated_until=until,
+                        created_at=datetime.utcnow(),
+                        last_active_at=datetime.utcnow()
+                    )
+                    session.add(user)
+                else:
+                    user.admin_authenticated_until = until
+                    user.last_active_at = datetime.utcnow()
                 await session.commit()
-        except Exception:
-            pass
+                logger.info(f"Admin session successfully saved in DB for user {user_id} until {until}")
+        except Exception as e:
+            logger.error(f"Error setting admin session for {user_id}: {e}", exc_info=True)
 
     @staticmethod
     async def clear_admin_session(user_id: int) -> None:
@@ -125,7 +143,9 @@ class UserService:
                 stmt = update(User).where(User.user_id == user_id).values(admin_authenticated_until=None)
                 await session.execute(stmt)
                 await session.commit()
-        except Exception:
-            pass
+                logger.info(f"Admin session cleared for user {user_id}")
+        except Exception as e:
+            logger.error(f"Error clearing admin session for {user_id}: {e}", exc_info=True)
+
 
 

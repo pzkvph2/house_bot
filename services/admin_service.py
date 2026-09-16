@@ -1,16 +1,20 @@
 import csv
 import io
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from sqlalchemy import select, func, desc
 from database.db import async_session
 from database.models import User
 
+logger = logging.getLogger(__name__)
+
 class AdminService:
     @staticmethod
     async def get_stats() -> Dict[str, Any]:
         """Сбор подробной статистики по пользователям, языкам, тестам и офферам"""
         try:
+
             async with async_session() as session:
                 # Общее количество пользователей
                 total_users_res = await session.execute(select(func.count(User.user_id)))
@@ -66,6 +70,7 @@ class AdminService:
                     "clicks": clicks,
                 }
         except Exception as e:
+            logger.error(f"Error collecting stats: {e}", exc_info=True)
             return {
                 "total_users": 0,
                 "users_today": 0,
